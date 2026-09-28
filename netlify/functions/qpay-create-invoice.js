@@ -8,7 +8,7 @@ exports.handler = async function (event) {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const amount = Number(process.env.QPAY_AMOUNT || 9900);
+    const amount = Number(process.env.QPAY_AMOUNT || 6900);
 
     const invoice = await createInvoice({
       amount,
