@@ -19,12 +19,16 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { email, subject, html } = payload;
+  // pdf: base64 (data: prefix-гүй) — хөтөч дээр html2pdf.js-ээр үүсгэсэн тайлан
+  const { email, subject, html, pdf, filename } = payload;
 
   // Энгийн шалгалт
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!email || !emailRegex.test(email)) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Зөв и-мэйл хаяг өгөөгүй байна' }) };
+  }
+  if (pdf && !/^[A-Za-z0-9+/=]+$/.test(pdf)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'PDF хавсралт буруу форматтай байна' }) };
   }
   if (!html) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Илгээх агуулга (html) өгөөгүй байна' }) };
@@ -32,6 +36,7 @@ exports.handler = async function (event) {
 
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
   if (!RESEND_API_KEY) {
+    console.error('[send-report] RESEND_API_KEY тохируулагдаагүй');
     return {
       statusCode: 500,
       body: JSON.stringify({ error: 'RESEND_API_KEY тохируулагдаагүй байна. Netlify -> Site settings -> Environment variables хэсэгт нэмнэ үү.' }),
@@ -56,12 +61,19 @@ exports.handler = async function (event) {
         to: [email],
         subject: subject || 'Таны Astro Read тайлан',
         html,
+        ...(pdf && {
+          attachments: [{
+            filename: /^[\w.-]+\.pdf$/.test(filename || '') ? filename : 'astro-read-tailan.pdf',
+            content: pdf,
+          }],
+        }),
       }),
     });
 
     const data = await resp.json();
 
     if (!resp.ok) {
+      console.error('[send-report] Resend алдаа:', resp.status, JSON.stringify(data));
       return { statusCode: resp.status, body: JSON.stringify({ error: data }) };
     }
 
@@ -70,6 +82,7 @@ exports.handler = async function (event) {
       body: JSON.stringify({ success: true, id: data.id }),
     };
   } catch (err) {
+    console.error('[send-report] алдаа:', err);
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
