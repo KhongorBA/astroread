@@ -1167,17 +1167,38 @@
   async function buildReportPdfBase64(container){
     if (!window.html2pdf) throw new Error('PDF сан ачаалагдаагүй байна');
     const bg = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#ffffff';
-    const dataUri = await window.html2pdf()
-      .set({
-        margin: [10, 8, 10, 8],
-        image: { type: 'jpeg', quality: 0.85 },
-        html2canvas: { scale: 1.5, useCORS: true, backgroundColor: bg },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'], avoid: ['.report-item', '.subcard', '.month-card', '.tier-card'] },
-      })
-      .from(container)
-      .outputPdf('datauristring');
-    return dataUri.split(',')[1];
+    try {
+      const dataUri = await window.html2pdf()
+        .set({
+          margin: [10, 8, 10, 8],
+          image: { type: 'jpeg', quality: 0.85 },
+          html2canvas: { scale: 1.5, useCORS: true, backgroundColor: bg, onclone: stripUnsupportedColors },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['css', 'legacy'], avoid: ['.report-item', '.subcard', '.month-card', '.tier-card'] },
+        })
+        .from(container)
+        .outputPdf('datauristring');
+      return dataUri.split(',')[1];
+    } finally {
+      // html2pdf рендерлэх үедээ бүтэн дэлгэцийн overlay (z-index:1000) нэмдэг бөгөөд
+      // алдаа гарвал түүнийгээ устгадаггүй — хуудас гацахаас сэргийлж үргэлж цэвэрлэнэ.
+      document.querySelectorAll('.html2pdf__overlay, .html2pdf__container').forEach(el => {
+        (el.closest('.html2pdf__overlay') || el).remove();
+      });
+    }
+  }
+
+  // html2canvas нь color-mix()-ээс гарах color(srgb ...) өнгийг уншиж чаддаггүй
+  // (box-shadow, gradient дээр алдаа өгдөг) — PDF-ийн хуулбараас тэдгээрийг авна.
+  function stripUnsupportedColors(doc){
+    const win = doc.defaultView;
+    const bad = /color\(|color-mix|oklch|oklab|lab\(|lch\(/;
+    doc.querySelectorAll('*').forEach(el => {
+      const cs = win.getComputedStyle(el);
+      if (bad.test(cs.boxShadow)) el.style.boxShadow = 'none';
+      if (bad.test(cs.textShadow)) el.style.textShadow = 'none';
+      if (bad.test(cs.backgroundImage)) el.style.backgroundImage = 'none';
+    });
   }
 
   async function sendReportPdf(){
@@ -1204,17 +1225,40 @@
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'илгээж чадсангүй');
+      if (!res.ok){
+        const e = data.error;
+        throw new Error((e && (e.message || e.error)) || (typeof e === 'string' ? e : 'HTTP ' + res.status));
+      }
       msg.textContent = '✓ PDF тайланг ' + email + ' хаяг руу илгээлээ.';
+      return true;
     } catch (err) {
-      // Зөвхөн жинхэнэ Netlify deploy дээр, RESEND_API_KEY тохируулсны дараа ажиллана
+      console.error('[Astro Read] PDF/и-мэйл илгээхэд алдаа:', err);
       msg.textContent = 'И-мэйл илгээхэд алдаа гарлаа: ' + err.message;
+      return false;
     }
   }
 
   function stopQpayPolling(){
     if (qpayPollTimer) clearInterval(qpayPollTimer);
     qpayPollTimer = null;
+  }
+
+  // ТҮР ТУРШИЛТ: true үед "Төлбөрөө шалгах" товч дарахад QPay-г шалгалгүйгээр
+  // төлбөр төлөгдсөн гэж үзнэ. Жинхэнэ ажиллуулахын өмнө заавал false болгоно!
+  const QPAY_TEST_BYPASS = false;
+  let qpayPaidHandled = false;
+
+  async function handleQpayPaid(){
+    if (qpayPaidHandled) return; // зэрэг явсан өөр шалгалт аль хэдийн боловсруулсан
+    qpayPaidHandled = true;
+    qpayInvoiceId = null;
+    stopQpayPolling();
+    document.getElementById('qpayStatus').textContent = '✓ Төлбөр баталгаажлаа!';
+    unlockAll();
+    const sent = await sendReportPdf();
+    // Амжилттай бол автоматаар хаана; алдаа гарвал мессежийг уншуулахаар нээлттэй
+    // үлдээнэ (× товчоор хаагдана, тайлан аль хэдийн нээгдсэн).
+    if (sent) setTimeout(() => document.getElementById('payModal').classList.remove('show'), 2500);
   }
 
   async function checkQpayPayment(){
@@ -1230,13 +1274,7 @@
       if (!res.ok) throw new Error(data.error || 'check failed');
 
       if (data.paid){
-        if (!qpayInvoiceId) return; // зэрэг явсан өөр шалгалт аль хэдийн боловсруулсан
-        qpayInvoiceId = null;
-        stopQpayPolling();
-        statusEl.textContent = '✓ Төлбөр баталгаажлаа!';
-        unlockAll();
-        await sendReportPdf();
-        setTimeout(() => document.getElementById('payModal').classList.remove('show'), 2500);
+        await handleQpayPaid();
       } else {
         statusEl.textContent = 'Төлбөр хараахан ороогүй байна. QR-аа уншуулаад дахин шалгана уу.';
       }
@@ -1286,6 +1324,7 @@
     statusEl.textContent = 'QR бэлдэж байна...';
     document.getElementById('emailSentMsg').style.display = 'none';
     qpayInvoiceId = null;
+    qpayPaidHandled = false;
     stopQpayPolling();
 
     try {
@@ -1312,7 +1351,10 @@
     }
   }
 
-  document.getElementById('qpayCheckBtn').addEventListener('click', checkQpayPayment);
+  document.getElementById('qpayCheckBtn').addEventListener('click', () => {
+    if (QPAY_TEST_BYPASS) return handleQpayPaid();
+    checkQpayPayment();
+  });
   document.getElementById('modalClose').addEventListener('click', () => {
     document.getElementById('payModal').classList.remove('show');
     stopQpayPolling();

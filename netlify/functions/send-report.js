@@ -36,6 +36,7 @@ exports.handler = async function (event) {
 
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
   if (!RESEND_API_KEY) {
+    console.error('[send-report] RESEND_API_KEY тохируулагдаагүй');
     return {
       statusCode: 500,
       body: JSON.stringify({ error: 'RESEND_API_KEY тохируулагдаагүй байна. Netlify -> Site settings -> Environment variables хэсэгт нэмнэ үү.' }),
@@ -72,6 +73,7 @@ exports.handler = async function (event) {
     const data = await resp.json();
 
     if (!resp.ok) {
+      console.error('[send-report] Resend алдаа:', resp.status, JSON.stringify(data));
       return { statusCode: resp.status, body: JSON.stringify({ error: data }) };
     }
 
@@ -80,6 +82,7 @@ exports.handler = async function (event) {
       body: JSON.stringify({ success: true, id: data.id }),
     };
   } catch (err) {
+    console.error('[send-report] алдаа:', err);
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
