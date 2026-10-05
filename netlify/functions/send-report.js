@@ -19,12 +19,16 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { email, subject, html } = payload;
+  // pdf: base64 (data: prefix-гүй) — хөтөч дээр html2pdf.js-ээр үүсгэсэн тайлан
+  const { email, subject, html, pdf, filename } = payload;
 
   // Энгийн шалгалт
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!email || !emailRegex.test(email)) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Зөв и-мэйл хаяг өгөөгүй байна' }) };
+  }
+  if (pdf && !/^[A-Za-z0-9+/=]+$/.test(pdf)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'PDF хавсралт буруу форматтай байна' }) };
   }
   if (!html) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Илгээх агуулга (html) өгөөгүй байна' }) };
@@ -56,6 +60,12 @@ exports.handler = async function (event) {
         to: [email],
         subject: subject || 'Таны Astro Read тайлан',
         html,
+        ...(pdf && {
+          attachments: [{
+            filename: /^[\w.-]+\.pdf$/.test(filename || '') ? filename : 'astro-read-tailan.pdf',
+            content: pdf,
+          }],
+        }),
       }),
     });
 
